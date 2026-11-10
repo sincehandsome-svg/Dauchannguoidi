@@ -12,8 +12,13 @@ html,body{margin:0;height:100%;font:15px/1.35 Roboto,system-ui,sans-serif;color:
 button{font:inherit;cursor:pointer}
 #map{position:absolute;inset:0;background:#e8eaed}
 .fl{position:absolute;z-index:1000}
-#top{left:12px;right:12px;top:calc(12px + env(safe-area-inset-top));height:52px;border-radius:26px;background:#fff;box-shadow:var(--sh);display:flex;align-items:center;gap:10px;padding:0 18px;font-size:17px}
-#stat{margin-left:auto;color:var(--g);font-size:14px}
+#top{left:12px;right:12px;top:calc(12px + env(safe-area-inset-top));height:52px;border-radius:26px;background:#fff;box-shadow:var(--sh);display:flex;align-items:center;gap:10px;padding:0 14px 0 18px}
+#q{flex:1;min-width:0;border:0;outline:0;background:none;font:inherit;font-size:17px;color:#202124}
+#qx{border:0;background:none;font-size:18px;color:var(--g);padding:4px}
+#res{left:12px;right:12px;top:calc(70px + env(safe-area-inset-top));z-index:1100;background:#fff;border-radius:16px;box-shadow:var(--sh);max-height:50vh;overflow:auto}
+.rs{padding:12px 16px;border-top:1px solid #eee}
+.rs:first-child{border-top:0}
+.pin{font-size:28px;line-height:1;background:none;border:0}
 #chips{left:0;right:0;top:calc(74px + env(safe-area-inset-top));padding:0 12px;display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
 #chips::-webkit-scrollbar{display:none}
 .chip{flex:none;height:38px;padding:0 16px;border-radius:19px;background:#fff;border:0;box-shadow:var(--sh);color:#202124}
@@ -44,6 +49,7 @@ h2{margin:0;font-size:22px;font-weight:500}
 .btn.red{color:#d93025}
 @media(min-width:700px){
  #top{right:auto;width:420px}
+ #res{right:auto;width:420px}
  #chips{left:444px;top:calc(19px + env(safe-area-inset-top));padding:0}
  #sheet{right:auto;width:420px}
  #sheet.open #panel{height:56vh}
@@ -55,8 +61,10 @@ h2{margin:0;font-size:22px;font-weight:500}
 
 <div id="top" class="fl">
   <svg width="26" height="26" viewBox="0 0 24 24"><path fill="#ea4335" d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>
-  <b>Dấu Chân</b><span id="stat"></span>
+  <input id="q" type="text" placeholder="Tìm kiếm ở đây" enterkeyhint="search" autocomplete="off" autocorrect="off">
+  <button id="qx" hidden aria-label="Xóa">✕</button>
 </div>
+<div id="res" class="fl" hidden></div>
 
 <div id="chips" class="fl">
   <button class="chip on" data-r="all">Tất cả</button>
@@ -89,7 +97,7 @@ h2{margin:0;font-size:22px;font-weight:500}
       <div class="sub">Lưu trong trình duyệt trên máy này.</div>
       <button class="btn" id="exp">Xuất dữ liệu (.json)</button>
       <button class="btn red" id="clr">Xóa tất cả chuyến đi</button>
-      <div class="sub" style="margin-top:12px">Bản đồ © OpenStreetMap, © CARTO · Vệ tinh: Esri · Leaflet</div>
+      <div class="sub" style="margin-top:12px">Bản đồ và tìm kiếm © OpenStreetMap (Nominatim), © CARTO · Vệ tinh: Esri · Leaflet</div>
     </div>
   </div>
   <div id="nav">
@@ -102,7 +110,10 @@ h2{margin:0;font-size:22px;font-weight:500}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const AUTO_ZOOM=13; /* mức zoom khi mở app (số nhỏ = xa hơn) */
 const KEY='trips_v1',CK='cur_v1';
+let statText='',region='',note='',lastRev=0,firstFix=true;
 let trips=[];
 try{trips=JSON.parse(localStorage.getItem(KEY)||'[]');}catch(e){}
 try{
@@ -152,9 +163,10 @@ function draw(fit){
     total+=len(t.p);
     if(t.p.length>1)L.polyline(t.p,{color:'#1a73e8',weight:4,opacity:.45,lineJoin:'round'}).addTo(layer);
   });
-  $('#stat').textContent=km(total)+' km · '+list.length+' chuyến';
+  statText=km(total)+' km · '+list.length+' chuyến';
   if(fit){const pts=list.flatMap(t=>t.p);if(pts.length)map.fitBounds(pts,{padding:[60,60]});}
   renderTrips();
+  if(!cur)ui();
 }
 document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
   document.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x===c));
@@ -193,27 +205,47 @@ function layout(){
 new ResizeObserver(layout).observe($('#sheet'));
 addEventListener('resize',layout);
 
-/* ---------- ghi hành trình ---------- */
-const GO=$('#fabi').innerHTML;
-const STOP='<svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
-let cur=null,watchId=null,wake=null,live=null,me=null,timer=null,acc=null,note='';
+/* ---------- định vị ---------- */
+let cur=null,watchId=null,wake=null,live=null,me=null,timer=null,acc=null;
 
 function setMe(ll){
   if(!me)me=L.circleMarker(ll,{radius:8,color:'#fff',weight:3,fillColor:'#1a73e8',fillOpacity:1}).addTo(map);
   me.setLatLng(ll);
 }
-map.on('locationfound',e=>setMe(e.latlng));
+async function rev(ll){
+  if(Date.now()-lastRev<30000)return;
+  lastRev=Date.now();
+  try{
+    const r=await fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&accept-language=vi&lat='+ll.lat+'&lon='+ll.lng);
+    const j=await r.json();const a=j.address||{};
+    region=a.state||a.province||a.city||a.county||'';
+    if(!cur)ui();
+  }catch(e){}
+}
+map.on('locationfound',e=>{
+  setMe(e.latlng);
+  if(firstFix){firstFix=false;map.setView(e.latlng,AUTO_ZOOM);}
+  rev(e.latlng);
+});
+map.on('locationerror',()=>{
+  note='Chưa lấy được vị trí. Hãy cho Chrome quyền vị trí.';ui();
+  setTimeout(()=>{note='';if(!cur)ui();},6000);
+});
 $('#loc').onclick=()=>map.locate({setView:true,maxZoom:17,enableHighAccuracy:true});
 
+/* ---------- ghi hành trình ---------- */
 async function lock(){try{wake=await navigator.wakeLock.request('screen');}catch(e){}}
 document.addEventListener('visibilitychange',()=>{if(cur&&document.visibilityState==='visible')lock();});
 
+const GO=$('#fabi').innerHTML;
+const STOP='<svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+
 function ui(){
   if(!cur){
-    $('#p-map').innerHTML='<h2>Dấu Chân</h2><div class="sub">'+(note||'Bấm Bắt đầu khi bạn di chuyển. Để màn hình sáng khi ghi.')+'</div>';
+    $('#p-map').innerHTML='<h2>'+(region?'📍 '+esc(region):'Dấu Chân')+'</h2><div class="sub">'+esc(note||statText)+'</div>';
     return;
   }
-  $('#p-map').innerHTML='<div class="big">'+km(len(cur.p))+' km</div><div class="sub">'+dur(Date.now()-cur.start)+' · sai số '+(acc==null?'–':'±'+Math.round(acc)+' m')+(note?' · '+note:'')+'</div>';
+  $('#p-map').innerHTML='<div class="big">'+km(len(cur.p))+' km</div><div class="sub">'+dur(Date.now()-cur.start)+' · sai số '+(acc==null?'–':'±'+Math.round(acc)+' m')+(note?' · '+esc(note):'')+'</div>';
 }
 
 function start(){
@@ -253,6 +285,49 @@ function onPos(pos){
 }
 $('#fab').onclick=()=>cur?stop():start();
 
+/* ---------- tìm kiếm địa điểm ---------- */
+let sMark=null,sData=[];
+async function search(){
+  const q=$('#q').value.trim();
+  if(!q)return;
+  const b=map.getBounds();
+  const vb=[b.getWest(),b.getNorth(),b.getEast(),b.getSouth()].join(',');
+  const res=$('#res');
+  res.hidden=false;
+  res.innerHTML='<div class="sub" style="padding:14px 16px">Đang tìm…</div>';
+  try{
+    const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&accept-language=vi&countrycodes=vn&viewbox='+vb+'&q='+encodeURIComponent(q));
+    sData=await r.json();
+    if(!sData.length){res.innerHTML='<div class="sub" style="padding:14px 16px">Không tìm thấy.</div>';return;}
+    res.innerHTML=sData.map((x,i)=>'<div class="rs" data-i="'+i+'"><b>'+esc(x.name||x.display_name.split(',')[0])+'</b><div class="sub">'+esc(x.display_name)+'</div></div>').join('');
+  }catch(e){
+    res.innerHTML='<div class="sub" style="padding:14px 16px">Lỗi mạng, thử lại.</div>';
+  }
+}
+$('#q').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();search();}});
+$('#q').addEventListener('input',()=>{$('#qx').hidden=!$('#q').value;});
+$('#qx').onclick=()=>{
+  $('#q').value='';$('#qx').hidden=true;$('#res').hidden=true;
+  if(sMark){map.removeLayer(sMark);sMark=null;}
+};
+$('#res').onclick=e=>{
+  const r=e.target.closest('.rs');
+  if(!r)return;
+  const x=sData[+r.dataset.i];
+  if(!x)return;
+  const ll=[+x.lat,+x.lon];
+  if(sMark)map.removeLayer(sMark);
+  sMark=L.marker(ll,{icon:L.divIcon({html:'📍',className:'pin',iconSize:[30,30],iconAnchor:[15,28]})}).addTo(map);
+  sMark.bindPopup(esc(x.display_name));
+  if(x.boundingbox){
+    const bb=x.boundingbox.map(Number); /* nam, bắc, tây, đông */
+    map.fitBounds([[bb[0],bb[2]],[bb[1],bb[3]]],{maxZoom:17});
+  }else map.setView(ll,16);
+  $('#res').hidden=true;
+  $('#q').blur();
+};
+map.on('click',()=>{$('#res').hidden=true;});
+
 /* ---------- dữ liệu ---------- */
 $('#exp').onclick=()=>{
   const a=document.createElement('a');
@@ -271,7 +346,7 @@ if(location.hash==='#test')map.on('click',e=>{
 
 /* ---------- khởi động ---------- */
 setTab('map');draw(true);ui();
-if(!trips.length)map.locate({setView:true,maxZoom:16});
+map.locate({enableHighAccuracy:false,timeout:15000});
 </script>
 </body>
 </html>
