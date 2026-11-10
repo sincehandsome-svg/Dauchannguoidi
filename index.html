@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dấu Chân</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+html,body{margin:0;height:100%}
+#map{position:absolute;inset:0}
+#bar{position:absolute;z-index:1000;left:0;right:0;bottom:0;padding:12px;background:#fff;display:flex;gap:8px;align-items:center;font:15px sans-serif;box-shadow:0 -2px 8px #0003}
+#info{flex:1}
+button{padding:12px 16px;font-size:16px;border:0;border-radius:8px;background:#1a73e8;color:#fff}
+button.stop{background:#d93025}
+button.sec{background:#5f6368}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="bar">
+  <div id="info">Sẵn sàng</div>
+  <button id="exp" class="sec">Xuất</button>
+  <button id="btn">Start</button>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const KEY='trips_v1';
+let trips=JSON.parse(localStorage.getItem(KEY)||'[]');
+let cur=null,watchId=null,wake=null,liveLine=null,me=null;
+
+const map=L.map('map').setView([16,106],5);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+
+function dist(a,b){
+  const R=6371000,r=x=>x*Math.PI/180;
+  const dLat=r(b[0]-a[0]),dLng=r(b[1]-a[1]);
+  const h=Math.sin(dLat/2)**2+Math.cos(r(a[0]))*Math.cos(r(b[0]))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+function len(p){let s=0;for(let i=1;i<p.length;i++)s+=dist(p[i-1],p[i]);return s;}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(trips));}catch(e){}}
+
+const layer=L.layerGroup().addTo(map);
+function draw(){
+  layer.clearLayers();
+  trips.forEach(t=>{
+    if(t.p.length>1)L.polyline(t.p,{color:'#1a73e8',weight:4,opacity:.45}).addTo(layer);
+  });
+}
+draw();
+const all=trips.flatMap(t=>t.p);
+if(all.length)map.fitBounds(all);
+else map.locate({setView:true,maxZoom:16});
+
+const btn=document.getElementById('btn'),info=document.getElementById('info');
+
+async function lock(){try{wake=await navigator.wakeLock.request('screen');}catch(e){}}
+document.addEventListener('visibilitychange',()=>{
+  if(cur&&document.visibilityState==='visible')lock();
+});
+
+function start(){
+  if(!navigator.geolocation){info.textContent='Máy không hỗ trợ GPS';return;}
+  cur={start:Date.now(),p:[]};
+  liveLine=L.polyline([],{color:'#d93025',weight:5}).addTo(map);
+  lock();
+  watchId=navigator.geolocation.watchPosition(onPos,
+    err=>{info.textContent='Lỗi GPS: '+err.message;},
+    {enableHighAccuracy:true,maximumAge:0,timeout:20000});
+  btn.textContent='Stop';btn.className='stop';
+}
+
+function stop(){
+  navigator.geolocation.clearWatch(watchId);
+  if(wake){wake.release();wake=null;}
+  if(cur.p.length>1){cur.end=Date.now();trips.push(cur);save();}
+  cur=null;map.removeLayer(liveLine);draw();
+  btn.textContent='Start';btn.className='';
+  info.textContent='Đã lưu. Tổng '+trips.length+' chuyến';
+}
+
+function onPos(pos){
+  const c=pos.coords,pt=[c.latitude,c.longitude];
+  if(!me)me=L.circleMarker(pt,{radius:7,color:'#fff',weight:2,fillColor:'#1a73e8',fillOpacity:1}).addTo(map);
+  me.setLatLng(pt);
+  if(c.accuracy>30){info.textContent='GPS yếu (±'+Math.round(c.accuracy)+' m)';return;}
+  const last=cur.p[cur.p.length-1];
+  if(last&&dist(last,pt)<3)return;
+  cur.p.push(pt);
+  liveLine.setLatLngs(cur.p);
+  map.panTo(pt);
+  info.textContent=(len(cur.p)/1000).toFixed(2)+' km · ±'+Math.round(c.accuracy)+' m';
+}
+
+btn.onclick=()=>cur?stop():start();
+
+document.getElementById('exp').onclick=()=>{
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(trips)],{type:'application/json'}));
+  a.download='dauchan.json';a.click();
+};
+</script>
+</body>
+</html>
