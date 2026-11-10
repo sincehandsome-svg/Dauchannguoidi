@@ -125,7 +125,7 @@ function save(){try{localStorage.setItem(KEY,JSON.stringify(trips));}catch(e){}}
 
 /* ---------- bản đồ ---------- */
 const map=L.map('map',{zoomControl:false,attributionControl:false}).setView([16,106],5);
-const street=L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{maxZoom:19,subdomains:'abcd'});
+const street=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19});
 const sat=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19});
 let base=street.addTo(map);
 $('#layers').onclick=()=>{map.removeLayer(base);base=(base===street)?sat:street;base.addTo(map);base.bringToBack();};
